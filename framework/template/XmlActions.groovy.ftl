@@ -39,6 +39,79 @@ return;
 return;
 </#macro>
 
+<#macro "service-group">
+    <#assign sendMode = .node["@send-mode"]>
+    String sendMode = ${sendMode}
+    int invokeCount = ${.node["service-invoke"]?size}
+    int runThisOne = -1
+    ec.logger.info("service-group start: sendMode=${sendMode} invokeCount=${r"${invokeCount}"}")
+    ec.logger.info("   context=" + context)
+    switch (sendMode) {
+        case 'none':
+            return
+        case 'random':
+            runThisOne = (Math.random() * invokeCount)
+            break
+        case 'first-available':
+        case 'round-robin':
+            throw new UnsupportedOperationException("sendMode: ${sendMode}")
+    }
+    <#list .node["service-invoke"] as invoke>
+        ec.logger.info("service-group looping: index=${invoke?index} runThisOne=${r"${runThisOne}"}")
+        if (runThisOne == -1 || runThisOne == ${invoke?index}) {
+            <#visit invoke>
+        }
+    </#list>
+</#macro>
+<#macro "service-invoke">
+    <#assign name = .node.@name>
+    <#assign handleResult = (!.node["@async"]?has_content || .node["@async"] == "false")>
+    <#assign isAsync = .node.@async?has_content && .node.@async != "false">
+    <#assign resultToContext = .node["@result-to-context"]?has_content && .node["@result-to-context"] == "true">
+    ec.logger.info("service-group/service-invoke: ${name}")
+    if (true) {
+        Map<String, Object> serviceResult = ec.service.<#if isAsync>async()<#else>sync()</#if><#rt> 
+        <#t>.name("${name}")<#if .node["@async"]?if_exists == "distribute">.distribute(true)</#if>
+        .parameters(context).call()
+        if (ec.message.hasError()) {
+            return
+        } else {
+            <#if resultToContext>
+            context.putAll(serviceResult)
+            </#if>
+        }
+    }
+</#macro>
+
+<#--
+<#macro assert><#list .node["*"] as childCond>
+    if (!(<#visit childCond/>)) ec.message.addError(ec.resource.expand('''<#if .node["@title"]?has_content>[${.node["@title"]}] </#if> Assert failed: <#visit childCond/>''',''))</#list>
+                        <xs:enumeration value="none"/>
+                        <xs:enumeration value="all"/>
+                        <xs:enumeration value="first-available"/>
+                        <xs:enumeration value="random"/>
+                        <xs:enumeration value="round-robin"/>
+            <xs:attribute name="name" type="name-full" use="required">
+                <xs:annotation><xs:documentation>
+                    The combined service name, like: "${path}.${verb}${noun}". To explicitly separate the verb and noun
+                    put a hash (#) between them, like: "${path}.${verb}#${noun}".
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="async" default="false">
+                <xs:annotation><xs:documentation>If true runs the service asynchronously. Use distribute to run async
+                    on any node in a cluster.</xs:documentation></xs:annotation>
+                <xs:simpleType>
+                    <xs:restriction base="xs:token">
+                        <xs:enumeration value="true"/>
+                        <xs:enumeration value="false"/>
+                        <xs:enumeration value="distribute"/>
+                    </xs:restriction>
+                </xs:simpleType>
+            </xs:attribute>
+            <xs:attribute name="result-to-context" default="false" type="boolean"/>
+        </xs:complexType>
+-->
+
 <#-- NOTE should we handle out-map?has_content and async!=false with a ServiceResultWaiter? -->
 <#macro "service-call">
     <#assign handleResult = (.node["@out-map"]?has_content && (!.node["@async"]?has_content || .node["@async"] == "false"))>
