@@ -218,7 +218,7 @@ class EntityDbMeta {
         }
 
         // do second pass to make sure all FKs created
-        if (tablesAdded > 0 && shouldCreateFks(efi.ecfi)) {
+        if ((true || tablesAdded > 0) && shouldCreateFks(efi.ecfi)) {
             logger.info("Tables were created, checking FKs for all entities in group ${groupName}")
 
             beganTx = useTxForMetaData ? efi.ecfi.transactionFacade.begin(300) : false
