@@ -112,6 +112,7 @@ class WebFacadeStub implements WebFacade {
     @Override String getPathInfo() { return httpServletRequest.getPathInfo() }
     @Override ArrayList<String> getPathInfoList() { return WebFacadeImpl.getPathInfoList(request) }
     @Override String getRequestBodyText() { return null }
+    @Override String getResourceDistinctValue() { return ecfi.initStartHex }
 
     @Override HttpServletResponse getResponse() { return httpServletResponse }
     @Override HttpSession getSession() { return httpSession }
@@ -171,8 +172,9 @@ class WebFacadeStub implements WebFacade {
         // logger.info("WebFacadeStub sendTextResponse (${text.length()} chars, content type ${contentType}, filename: ${filename})")
     }
 
-    @Override void sendResourceResponse(String location) {
-        WebFacadeImpl.sendResourceResponseInternal(location, false, ecfi.getEci(), httpServletResponse)
+    @Override void sendResourceResponse(String location) { sendResourceResponse(location, false) }
+    @Override void sendResourceResponse(String location, boolean inline) {
+        WebFacadeImpl.sendResourceResponseInternal(location, inline, ecfi.getEci(), httpServletResponse)
         /*
         ResourceReference rr = ecfi.getResource().getLocationReference(location)
         if (rr == null) throw new IllegalArgumentException("Resource not found at: ${location}")

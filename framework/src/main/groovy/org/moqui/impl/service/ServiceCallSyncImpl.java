@@ -77,8 +77,6 @@ public class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallS
                 try {
                     Map<String, Object> result = new HashMap<>();
                     for (int i = 0; ; i++) {
-                        if (("true".equals(parameters.get("_useRowSubmit")) || "true".equals(parameters.get("_useRowSubmit_" + i)))
-                                && !"true".equals(parameters.get("_rowSubmit_" + i))) continue;
                         Map<String, Object> currentParms = new HashMap<>();
                         for (int paramIndex = 0; paramIndex < inParameterNamesSize; paramIndex++) {
                             String ipn = inParameterNames.get(paramIndex);
@@ -88,6 +86,10 @@ public class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallS
 
                         // if the map stayed empty we have no parms, so we're done
                         if (currentParms.size() == 0) break;
+
+                        if (("true".equals(parameters.get("_useRowSubmit")) || "true".equals(parameters.get("_useRowSubmit_" + i)))
+                                && !"true".equals(parameters.get("_rowSubmit_" + i))) continue;
+
                         // now that we have checked the per-row parameters, add in others available
                         for (int paramIndex = 0; paramIndex < inParameterNamesSize; paramIndex++) {
                             String ipn = inParameterNames.get(paramIndex);
@@ -297,7 +299,8 @@ public class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallS
             if (sd.noTxCache) {
                 tf.flushAndDisableTransactionCache();
             } else {
-                if (useTransactionCache != null ? useTransactionCache : sd.txUseCache) tf.initTransactionCache();
+                if (useTransactionCache != null ? useTransactionCache : sd.txUseCache) tf.initTransactionCache(false);
+                // alternative to use read only TX cache by default, not functional yet: tf.initTransactionCache(!(useTransactionCache != null ? useTransactionCache : sd.txUseCache));
             }
 
             try {
@@ -397,7 +400,7 @@ public class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallS
             }
 
             try {
-                if (userLoggedIn) eci.getUser().logoutUser();
+                if (userLoggedIn) eci.userFacade.logoutLocal();
             } catch (Throwable t) {
                 logger.error("Error logging out user after call to service " + serviceName, t);
             }
@@ -573,7 +576,10 @@ public class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallS
         try {
             if (pauseResumeIfNeeded && tf.isTransactionInPlace()) suspendedTransaction = tf.suspend();
             boolean beganTransaction = beginTransactionIfNeeded && tf.begin(null);
-            if (useTransactionCache != null && useTransactionCache) tf.initTransactionCache();
+
+            if (useTransactionCache != null && useTransactionCache) tf.initTransactionCache(false);
+            // alternative to use read only TX cache by default, not functional yet: tf.initTransactionCache(useTransactionCache == null || !useTransactionCache);
+
             try {
                 if (hasSecaRules) ServiceFacadeImpl.runSecaRules(serviceNameNoHash, currentParameters, null, "pre-service", secaRules, eci);
 
