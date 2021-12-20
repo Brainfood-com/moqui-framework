@@ -14,17 +14,6 @@
 package org.moqui.impl.context
 
 import groovy.transform.CompileStatic
-import org.moqui.context.ArtifactExecutionInfo
-import org.moqui.context.AuthenticationRequiredException
-import org.moqui.entity.EntityCondition
-import org.moqui.impl.context.ArtifactExecutionInfoImpl.ArtifactAuthzCheck
-import org.moqui.impl.entity.EntityValueBase
-import org.moqui.impl.screen.ScreenUrlInfo
-import org.moqui.impl.util.MoquiShiroRealm
-import org.moqui.util.MNode
-import org.moqui.util.ObjectUtilities
-import org.moqui.util.StringUtilities
-import org.moqui.util.WebUtilities
 
 import javax.websocket.server.HandshakeRequest
 import java.sql.Timestamp
@@ -36,14 +25,25 @@ import javax.servlet.http.HttpSession
 import org.apache.shiro.authc.AuthenticationException
 import org.apache.shiro.authc.UsernamePasswordToken
 import org.apache.shiro.subject.Subject
+import org.apache.shiro.subject.support.DefaultSubjectContext
 import org.apache.shiro.web.subject.WebSubjectContext
 import org.apache.shiro.web.subject.support.DefaultWebSubjectContext
 import org.apache.shiro.web.session.HttpServletSession
 
+import org.moqui.context.ArtifactExecutionInfo
+import org.moqui.context.AuthenticationRequiredException
+import org.moqui.context.SecondFactorRequiredException
 import org.moqui.context.UserFacade
-import org.moqui.entity.EntityValue
+import org.moqui.entity.EntityCondition
 import org.moqui.entity.EntityList
-import org.apache.shiro.subject.support.DefaultSubjectContext
+import org.moqui.entity.EntityValue
+import org.moqui.impl.context.ArtifactExecutionInfoImpl.ArtifactAuthzCheck
+import org.moqui.impl.entity.EntityValueBase
+import org.moqui.impl.screen.ScreenUrlInfo
+import org.moqui.impl.util.MoquiShiroRealm
+import org.moqui.util.MNode
+import org.moqui.util.StringUtilities
+import org.moqui.util.WebUtilities
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -93,10 +93,8 @@ class UserFacadeImpl implements UserFacade {
         this.response = response
         this.session = request.getSession()
 
-        // get client IP address, handle proxy original address if exists
-        String forwardedFor = request.getHeader("X-Forwarded-For")
-        if (forwardedFor != null && !forwardedFor.isEmpty()) { clientIpInternal = forwardedFor.split(",")[0].trim() }
-        else { clientIpInternal = request.getRemoteAddr() }
+        // get client IP address, handle proxy upstream address if added in a header
+        clientIpInternal = getClientIp(request, null, eci.ecfi)
 
         String preUsername = getUsername()
         Subject webSubject = makeEmptySubject()
@@ -125,6 +123,7 @@ class UserFacadeImpl implements UserFacade {
                 if (oldSession != null) oldSession.invalidate()
                 this.session = request.getSession()
             } else {
+
                 // effectively login the user for framework (already logged in for session through Shiro)
                 pushUserSubject(webSubject)
                 if (logger.traceEnabled) logger.trace("For new request found user [${getUsername()}] in the session")
@@ -263,9 +262,7 @@ class UserFacadeImpl implements UserFacade {
         this.session = (HttpSession) request.getHttpSession()
 
         // get client IP address, handle proxy original address if exists
-        String forwardedFor = request.getHeaders().get("X-Forwarded-For")?.first()
-        if (forwardedFor != null && !forwardedFor.isEmpty()) { clientIpInternal = forwardedFor.split(",")[0].trim() }
-        // any other way to get websocket client IP? else { clientIpInternal = request.getRemoteAddr() }
+        clientIpInternal = getClientIp(null, request, eci.ecfi)
 
         // WebSocket handshake request is the HTTP upgrade request so this will be the original session
         // login user from value in session
@@ -642,6 +639,12 @@ class UserFacadeImpl implements UserFacade {
             // do the actual login through Shiro
             loginSubject.login(token)
 
+            if (eci.web != null) {
+                // this ensures that after correctly logging in, a previously attempted login user's "Second Factor" screen isn't displayed
+                eci.web.sessionAttributes.remove("moquiAuthcFactorUsername")
+                eci.web.sessionAttributes.remove("moquiAuthcFactorRequired")
+            }
+
             // do this first so that the rest will be done as this user
             // just in case there is already a user authenticated push onto a stack to remember
             pushUserSubject(loginSubject)
@@ -651,14 +654,21 @@ class UserFacadeImpl implements UserFacade {
                 eci.getWebImpl().runAfterLoginActions()
                 eci.getWebImpl().getRequest().setAttribute("moqui.request.authenticated", "true")
             }
+        } catch (SecondFactorRequiredException ae) {
+            if (eci.web != null) {
+                // This makes the session realize the this user needs to verify login with an authentication factor
+                eci.web.sessionAttributes.put("moquiAuthcFactorUsername", username)
+                eci.web.sessionAttributes.put("moquiAuthcFactorRequired", "true")
+            }
+            return true
         } catch (AuthenticationException ae) {
             // others to consider handling differently (these all inherit from AuthenticationException):
             //     UnknownAccountException, IncorrectCredentialsException, ExpiredCredentialsException,
             //     CredentialsException, LockedAccountException, DisabledAccountException, ExcessiveAttemptsException
             eci.messageFacade.addError(ae.message)
+
             return false
         }
-
         return true
     }
 
@@ -707,6 +717,14 @@ class UserFacadeImpl implements UserFacade {
     }
 
     @Override void logoutUser() {
+        String userId = getUserId()
+        // if userId set hasLoggedOut
+        if (userId != null && !userId.isEmpty()) {
+            logger.info("Setting hasLoggedOut for user ${userId}")
+            eci.serviceFacade.sync().name("update", "moqui.security.UserAccount")
+                    .parameters([userId:userId, hasLoggedOut:"Y"]).disableAuthz().call()
+        }
+
         logoutLocal()
 
         // if there is a request and session invalidate and get new
@@ -714,14 +732,6 @@ class UserFacadeImpl implements UserFacade {
             HttpSession oldSession = request.getSession(false)
             if (oldSession != null) oldSession.invalidate()
             session = request.getSession()
-        }
-
-        String userId = getUserId()
-        // if userId set hasLoggedOut
-        if (userId != null && !userId.isEmpty()) {
-            logger.info("Setting hasLoggedOut for user ${userId}")
-            eci.serviceFacade.sync().name("update", "moqui.security.UserAccount")
-                    .parameters([userId:userId, hasLoggedOut:"Y"]).disableAuthz().call()
         }
     }
 
@@ -931,6 +941,68 @@ class UserFacadeImpl implements UserFacade {
         currentInfo = newCurInfo
     }
 
+    static String getClientIp(HttpServletRequest httpRequest, HandshakeRequest handshakeRequest, ExecutionContextFactoryImpl ecfi) {
+        // use configured client-ip-header to support more than the unreliable X-Forwarded-For header
+        String webappName = null
+        if (httpRequest != null) {
+            webappName = httpRequest.servletContext.getInitParameter("moqui-name")
+        } else if (handshakeRequest != null) {
+            Object hsrSession = handshakeRequest.httpSession
+            if (hsrSession instanceof HttpSession) webappName = hsrSession.getServletContext().getInitParameter("moqui-name")
+        }
+
+        String clientIpHeaderValue = null
+        if (webappName != null && !webappName.isEmpty()) {
+            ExecutionContextFactoryImpl.WebappInfo webappInfo = ecfi.getWebappInfo(webappName)
+            String clientIpHeader = webappInfo?.clientIpHeader
+            // get the header value from http or handshake request
+            if (clientIpHeader != null && !clientIpHeader.isEmpty()) {
+                if (httpRequest != null) {
+                    clientIpHeaderValue = httpRequest.getHeader(clientIpHeader)
+                } else if (handshakeRequest != null) {
+                    clientIpHeaderValue = handshakeRequest.getHeaders().get(clientIpHeader)?.first()
+                }
+
+                if (httpRequest != null && (clientIpHeaderValue == null || clientIpHeaderValue.isEmpty())) {
+                    logger.warn("No value found in HTTP request Client IP header ${clientIpHeader}, servlet container reports ${httpRequest.getRemoteAddr()}")
+                }
+            }
+        }
+
+        // get first entry in header value or request's remote addr
+        String clientIp = null
+        if (clientIpHeaderValue != null && !clientIpHeaderValue.isEmpty()) {
+            clientIp = clientIpHeaderValue.split(",")[0].trim()
+        } else {
+            if (httpRequest != null) {
+                clientIp = httpRequest.getRemoteAddr()
+                // logger.info("httpRequest remote addr clientIp ${clientIp}")
+            } else if (handshakeRequest != null) {
+                // any other way to get websocket client IP? else { clientIpInternal = request.getRemoteAddr() }
+            }
+        }
+
+        if (clientIp != null) {
+            // some headers, like CloudFront-Viewer-Address, contain a port as well so remove that
+            int cipColonIdx = clientIp.lastIndexOf(':')
+            if (cipColonIdx >= 0) {
+                // for IPv6 addresses with square braces, only strip before colon if colon after closing square brace
+                int closeSqBrIdx = clientIp.indexOf(']')
+                if (closeSqBrIdx == -1 || closeSqBrIdx < cipColonIdx)
+                    clientIp = clientIp.substring(cipColonIdx + 1)
+            }
+
+            // strip IPv6 square braces if present
+            if (clientIp != null && !clientIp.isEmpty()) {
+                if (clientIp.charAt(0) == (char) '[') clientIp = clientIp.substring(1)
+                if (clientIp.charAt(clientIp.length() - 1) == (char) ']')
+                    clientIp = clientIp.substring(0, clientIp.length() - 1)
+            }
+        }
+
+        return clientIp
+    }
+
     static class UserInfo {
         final UserFacadeImpl ufi
         // keep a reference to a UserAccount for performance reasons, avoid repeated cached queries
@@ -970,7 +1042,7 @@ class UserFacadeImpl implements UserFacade {
             EntityValueBase ua = (EntityValueBase) null
             if (username != null && username.length() > 0) {
                 ua = (EntityValueBase) ufi.eci.getEntity().find("moqui.security.UserAccount")
-                        .condition("username", username).useCache(true).disableAuthz().one()
+                        .condition("username", username).useCache(false).disableAuthz().one()
             }
             if (ua != null) {
                 userAccount = ua

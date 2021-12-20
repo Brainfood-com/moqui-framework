@@ -217,7 +217,7 @@ public class L10nFacadeImpl implements L10nFacade {
 
         // try interpreting the String as a long
         try {
-            Long lng = Long.valueOf(input);
+            long lng = Long.parseLong(input);
             return new java.sql.Date(lng);
         } catch (NumberFormatException e) {
             if (logger.isTraceEnabled()) logger.trace("Ignoring NumberFormatException for Date parse: " + e.toString());
@@ -262,9 +262,9 @@ public class L10nFacadeImpl implements L10nFacade {
         // long values are pretty common, so if there are no special characters try that first (fast to check)
         if (cal == null) {
             int nonDigits = ObjectUtilities.countChars(input, false, true, true);
-            if (nonDigits == 0) {
+            if (nonDigits == 0 || (nonDigits == 1 && input.startsWith("-"))) {
                 try {
-                    Long lng = Long.valueOf(input);
+                    long lng = Long.parseLong(input);
                     return new Timestamp(lng);
                 } catch (NumberFormatException e) {
                     if (logger.isTraceEnabled()) logger.trace("Ignoring NumberFormatException for Timestamp parse: " + e.toString());
@@ -302,7 +302,7 @@ public class L10nFacadeImpl implements L10nFacade {
 
     @Override public Calendar parseDateTime(String input, String format) {
         return calendarValidator.validate(input, format, getLocale(), getTimeZone()); }
-    public String formatDateTime(Calendar input, String format, Locale locale, TimeZone tz) {
+    @Override public String formatDateTime(Calendar input, String format, Locale locale, TimeZone tz) {
         if (locale == null) locale = getLocale();
         if (tz == null) tz = getTimeZone();
         return calendarValidator.format(input, format, locale, tz);
@@ -310,9 +310,19 @@ public class L10nFacadeImpl implements L10nFacade {
 
     @Override public BigDecimal parseNumber(String input, String format) {
         return bigDecimalValidator.validate(input, format, getLocale()); }
-    public String formatNumber(Number input, String format, Locale locale) {
+    @Override public String formatNumber(Number input, String format, Locale locale) {
         if (locale == null) locale = getLocale();
-        return bigDecimalValidator.format(input, format, locale);
+        if (format == null || format.isEmpty()) {
+            // BigDecimalValidator defaults to 3 decimal digits, if no format specified we don't want to truncate so small, use better defaults
+            NumberFormat nf = locale != null ? NumberFormat.getNumberInstance(locale) : NumberFormat.getNumberInstance();
+            nf.setMinimumFractionDigits(0);
+            nf.setMaximumFractionDigits(12);
+            nf.setMinimumIntegerDigits(1);
+            nf.setGroupingUsed(true);
+            return nf.format(input);
+        } else {
+            return bigDecimalValidator.format(input, format, locale);
+        }
     }
 
     @Override

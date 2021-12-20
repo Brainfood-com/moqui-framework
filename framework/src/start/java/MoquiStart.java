@@ -157,7 +157,8 @@ public class MoquiStart {
         // ===== Done trying specific commands, so load the embedded server
 
         // Get a start loader with loadWebInf=false since the container will load those we don't want to here (would be on classpath twice)
-        StartClassLoader moquiStartLoader = new StartClassLoader(reportJarsUnused);
+        // NOTE DEJ20210520: now always using StartClassLoader because of breaking classloader changes in 9.4.37 (likely from https://github.com/eclipse/jetty.project/pull/5894)
+        StartClassLoader moquiStartLoader = new StartClassLoader(true);
         Thread.currentThread().setContextClassLoader(moquiStartLoader);
 
         // NOTE: not using MoquiShutdown hook any more, let Jetty stop everything
@@ -218,6 +219,13 @@ public class MoquiStart {
 
             Object server = serverClass.getConstructor().newInstance();
             Object httpConfig = httpConfigurationClass.getConstructor().newInstance();
+
+            // add ForwardedRequestCustomizer to handle Forwarded and X-Forwarded-* HTTP Request Headers
+            // see https://www.eclipse.org/jetty/javadoc/jetty-9/org/eclipse/jetty/server/ForwardedRequestCustomizer.html
+            // NOTE: this is the only way Jetty knows about HTTPS/SSL so is needed, but the problem is these headers
+            //     are easily spoofed; this isn't too bad for X-Proxied-Https and X-Forwarded-Proto, and those are needed
+            // TODO: at least find some way to skip X-Forwarded-For: current behavior with new client-ip-header setting
+            //     is it will use that but if no client IP found that way it gets it from Jetty, which gets it from X-Forwarded-For, opening to spoofing
             Object forwardedRequestCustomizer = forwardedRequestCustomizerClass.getConstructor().newInstance();
             httpConfigurationClass.getMethod("addCustomizer", customizerClass).invoke(httpConfig, forwardedRequestCustomizer);
 
@@ -264,7 +272,8 @@ public class MoquiStart {
             }
             serverClass.getMethod("setHandler", handlerClass).invoke(server, webapp);
 
-            if (reportJarsUnused) webappClass.getMethod("setClassLoader", ClassLoader.class).invoke(webapp, moquiStartLoader);
+            // NOTE DEJ20210520: now always using StartClassLoader because of breaking classloader changes in 9.4.37 (likely from https://github.com/eclipse/jetty.project/pull/5894)
+            webappClass.getMethod("setClassLoader", ClassLoader.class).invoke(webapp, moquiStartLoader);
 
             // WebSocket
             Object wsContainer = wsInitializerClass.getMethod("configureContext", scHandlerClass).invoke(null, webapp);

@@ -362,7 +362,14 @@ class ScreenForm {
                     String fieldName = (String) dbFormField.fieldName
                     MNode newFieldNode = new MNode("field", [name:fieldName])
                     if (dbFormField.entryName) newFieldNode.attributes.put("from", (String) dbFormField.entryName)
-                    MNode subFieldNode = newFieldNode.append("default-field", null)
+
+                    // create the sub-field node; if DbFormField.condition use conditional-field instead of default-field
+                    MNode subFieldNode
+                    if (dbFormField.condition) {
+                        subFieldNode = newFieldNode.append("conditional-field", [condition:dbFormField.condition] as Map<String, String>)
+                    } else {
+                        subFieldNode = newFieldNode.append("default-field", null)
+                    }
                     if (dbFormField.title) subFieldNode.attributes.put("title", (String) dbFormField.title)
                     if (dbFormField.tooltip) subFieldNode.attributes.put("tooltip", (String) dbFormField.tooltip)
 
@@ -1226,7 +1233,7 @@ class ScreenForm {
                 String key = childNode.attribute('key')
                 if (key != null && key.contains('${')) key = ec.resource.expandNoL10n(key, null)
                 String text = childNode.attribute('text')
-                if (text != null && text.contains('${')) text = ec.resource.expand(text, null)
+                if (text != null) text = ec.resource.expand(text, null)
                 options.put(key, text ?: ec.l10n.localize(key))
             }
         }
