@@ -106,20 +106,20 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
 
     protected LinkedHashMap<String, ComponentInfo> componentInfoMap = new LinkedHashMap<>()
     public final ThreadLocal<ExecutionContextImpl> activeContext = new ThreadLocal<>()
-    protected final Map<Long, ExecutionContextImpl> activeContextMap = new HashMap<>()
+    public final Map<Long, ExecutionContextImpl> activeContextMap = new HashMap<>()
     protected final LinkedHashMap<String, ToolFactory> toolFactoryMap = new LinkedHashMap<>()
 
     protected final Map<String, WebappInfo> webappInfoMap = new HashMap<>()
     protected final List<NotificationMessageListener> registeredNotificationMessageListeners = []
 
     protected final Map<String, ArtifactStatsInfo> artifactStatsInfoByType = new HashMap<>()
-    public final Map<ArtifactType, Boolean> artifactTypeAuthzEnabled = new EnumMap<>(ArtifactType.class)
-    public final Map<ArtifactType, Boolean> artifactTypeTarpitEnabled = new EnumMap<>(ArtifactType.class)
+    public final Map<ArtifactType, Boolean> artifactTypeAuthzEnabled = new EnumMap<ArtifactType, Boolean>(ArtifactType.class)
+    public final Map<ArtifactType, Boolean> artifactTypeTarpitEnabled = new EnumMap<ArtifactType, Boolean>(ArtifactType.class)
 
     protected String skipStatsCond
     protected long hitBinLengthMillis = 900000 // 15 minute default
-    private final EnumMap<ArtifactType, Boolean> artifactPersistHitByTypeEnum = new EnumMap<>(ArtifactType.class)
-    private final EnumMap<ArtifactType, Boolean> artifactPersistBinByTypeEnum = new EnumMap<>(ArtifactType.class)
+    private final EnumMap<ArtifactType, Boolean> artifactPersistHitByTypeEnum = new EnumMap<ArtifactType, Boolean>(ArtifactType.class)
+    private final EnumMap<ArtifactType, Boolean> artifactPersistBinByTypeEnum = new EnumMap<ArtifactType, Boolean>(ArtifactType.class)
     final ConcurrentLinkedQueue<ArtifactHitInfo> deferredHitInfoQueue = new ConcurrentLinkedQueue<ArtifactHitInfo>()
 
     /** The SecurityManager for Apache Shiro */
@@ -452,27 +452,31 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>(workerQueueSize)
 
         int coreSize = (toolsNode.attribute("worker-pool-core") ?: "16") as int
-        int maxSize = (toolsNode.attribute("worker-pool-max") ?: "24") as int
-        int availableProcessorsSize = Runtime.getRuntime().availableProcessors() * 2
+        int maxSize = (toolsNode.attribute("worker-pool-max") ?: "32") as int
+        int availableProcessorsSize = Runtime.getRuntime().availableProcessors() * 3
         if (availableProcessorsSize > maxSize) {
-            logger.info("Setting worker pool size to ${availableProcessorsSize} based on available processors * 2")
+            logger.info("Setting worker pool size to ${availableProcessorsSize} based on available processors * 3")
             maxSize = availableProcessorsSize
         }
         long aliveTime = (toolsNode.attribute("worker-pool-alive") ?: "60") as long
 
         logger.info("Initializing worker ThreadPoolExecutor: queue limit ${workerQueueSize}, pool-core ${coreSize}, pool-max ${maxSize}, pool-alive ${aliveTime}s")
-        return new ContextJavaUtil.WorkerThreadPoolExecutor(this, coreSize, maxSize, aliveTime, TimeUnit.SECONDS, workQueue)
+        return new ContextJavaUtil.WorkerThreadPoolExecutor(this, coreSize, maxSize, aliveTime, TimeUnit.SECONDS,
+                workQueue, new ContextJavaUtil.WorkerThreadFactory())
     }
     boolean waitWorkerPoolEmpty(int retryLimit) {
+        ThreadPoolExecutor jobWorkerPool = serviceFacade.jobWorkerPool
         int count = 0
-        logger.warn("Wait for workerPool empty: queue size ${workerPool.getQueue().size()} active ${workerPool.getActiveCount()}")
-        while (count < retryLimit && (workerPool.getQueue().size() > 0 || workerPool.getActiveCount() > 0)) {
+        while (count < retryLimit && (workerPool.getQueue().size() > 0 || workerPool.getActiveCount() > 0 ||
+                jobWorkerPool.getQueue().size() > 0 || jobWorkerPool.getActiveCount() > 0)) {
+            if (count % 10 == 0) logger.warn("Wait for workerPool and jobWorkerPool empty: worker queue size ${workerPool.getQueue().size()} active ${workerPool.getActiveCount()} max threads ${workerPool.getMaximumPoolSize()}; service job queue size ${jobWorkerPool.getQueue().size()} active ${jobWorkerPool.getActiveCount()}")
             Thread.sleep(100)
             count++
         }
         int afterSize = workerPool.getQueue().size() + workerPool.getActiveCount()
-        if (afterSize > 0) logger.warn("After ${retryLimit} 100ms waits worker pool size is still ${afterSize}")
-        return afterSize == 0
+        int jobAfterSize = jobWorkerPool.getQueue().size() + jobWorkerPool.getActiveCount()
+        if (afterSize > 0 || jobAfterSize > 0) logger.warn("After ${retryLimit} 100ms waits worker pool size is ${afterSize} and service job pool size is ${jobAfterSize}")
+        return afterSize == 0 && jobAfterSize == 0
     }
 
     private CustomScheduledExecutor makeScheduledExecutor() {
@@ -784,14 +788,18 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
 
         // shutdown scheduled executor and worker pools
         try {
+            logger.info("Shutting scheduled executor")
             scheduledExecutor.shutdown()
+            logger.info("Shutting down worker pool")
             workerPool.shutdown()
 
             scheduledExecutor.awaitTermination(30, TimeUnit.SECONDS)
-            logger.info("Scheduled executor pool shut down")
-            logger.info("Shutting down worker pool")
+            if (scheduledExecutor.isTerminated()) logger.info("Scheduled executor shut down and terminated")
+            else logger.warn("Scheduled executor NOT YET terminated, waited 30 seconds")
+
             workerPool.awaitTermination(30, TimeUnit.SECONDS)
-            logger.info("Worker pool shut down")
+            if (workerPool.isTerminated()) logger.info("Worker pool shut down and terminated")
+            else logger.warn("Worker pool NOT YET terminated, waited 30 seconds")
         } catch (Throwable t) { logger.error("Error in workerPool/scheduledExecutor shutdown", t) }
 
         // stop NotificationMessageListeners
@@ -1516,9 +1524,11 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
                     // split into maxCreates chunks, repeat based on initial size (may be added to while running)
                     int remainingCreates = queue.size()
                     // if (remainingCreates > maxCreates) logger.warn("Deferred ArtifactHit create queue size ${remainingCreates} is greater than max creates per chunk ${maxCreates}")
+                    // logger.info("Flushing ArtifactHit queue, size " + queue.size())
                     while (remainingCreates > 0) {
                         flushQueue(queue)
                         remainingCreates -= maxCreates
+                        // logger.info("Flush ArtifactHit queue pass complete, queue size ${queue.size()} remainingCreates ${remainingCreates}")
                     }
                 } catch (Throwable t) {
                     logger.error("Error saving ArtifactHits", t)
@@ -1546,17 +1556,17 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
                     if (createListSize == 0) break
                     long startTime = System.currentTimeMillis()
                     ecfi.transactionFacade.runUseOrBegin(60, "Error saving ArtifactHits", {
+                        List<EntityValue> evList = new ArrayList<>(createListSize)
                         for (int i = 0; i < createListSize; i++) {
                             ArtifactHitInfo ahi = (ArtifactHitInfo) createList.get(i)
-                            try {
-                                EntityValue ahValue = ahi.makeAhiValue(localEcfi)
-                                ahValue.setSequencedIdPrimary()
-                                ahValue.create()
-                            } catch (Throwable t) {
-                                createList.remove(i)
-                                throw t
-                            }
+                            EntityValue ahValue = ahi.makeAhiValue(localEcfi)
+                            ahValue.setSequencedIdPrimary()
+                            evList.add(ahValue)
+                            // old approach, create call per record, too slow when ArtifactHitBin in the logging group for ElasticFacade
+                            // try { ahValue.create() } catch (Throwable t) { createList.remove(i); throw t }
                         }
+                        // new approach, use new EntityFacade.createBulk() method
+                        localEcfi.entityFacade.createBulk(evList)
                     })
                     if (isTraceEnabled) logger.trace("Created ${createListSize} ArtifactHit records in ${System.currentTimeMillis() - startTime}ms")
                     break
