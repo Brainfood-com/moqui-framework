@@ -419,7 +419,6 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="encrypt" noun="EntityEncryptedFields" authenticate="anonymous-all" transaction-timeout="900">
         <in-parameters>
             <parameter name="entityName" required="true"/>
-            <parameter name="encryptUnencryptedFields" type="Boolean" default="false" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="recordsUpdated" type="Long"/>
@@ -445,6 +444,10 @@ along with this software (see the LICENSE.md file). If not, see
                 </if>
             </iterate>
 
+            <if condition="!whereClauseList">
+                <return error="true" message="No encrypted fields found for ${entityName}"/>
+            </if>
+
             <set field="whereClause" from="whereClauseList.join(' OR ')"/>
             <set field="sql" value="select count(*) from ${tableName} where ${whereClause}"/>
             <service-call name="org.moqui.impl.EntityServices.run#Sql" in-map="[sql:sql]" out-map="context"/>
@@ -467,7 +470,6 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="encrypt" noun="SomeEntityEncryptedFields" authenticate="anonymous-all" transaction-timeout="900">
         <in-parameters>
             <parameter name="entityName" required="true"/>
-            <parameter name="encryptUnencryptedFields" type="Boolean" default="false" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="recordsUpdated" type="Long"/>
@@ -489,8 +491,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <set field="findFields" from="findFieldsList.join(',')"/>
 
                     <set field="sql" value="select ${findFields} from ${tableName} where ${EntityJavaUtil.camelCaseToUnderscored(encryptedField)} not like ':%'"/>
-                    <log level="warn" message="sql: ${sql}"/>
-                    <service-call name="org.moqui.impl.EntityServices.run#Sql" in-map="[sql:sql]" out-map="context"/>
+                    <service-call name="org.moqui.impl.EntityServices.run#Sql" in-map="[sql:sql,groupName:ed.groupName?:'transactional']" out-map="context"/>
 
                     <set field="recordList" from="[]"/>
                     <if condition="records">
