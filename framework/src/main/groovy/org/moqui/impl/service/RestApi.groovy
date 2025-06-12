@@ -645,7 +645,9 @@ class RestApi {
             // push onto artifact stack, check authz
             String curPath = getFullPathName([])
             ArtifactExecutionInfoImpl aei = new ArtifactExecutionInfoImpl(curPath, ArtifactExecutionInfo.AT_REST_PATH, getActionFromMethod(ec), ec.web.getRequest().getMethod().toLowerCase())
-            // for now don't track/count artifact hits for REST path
+            // TODO: Don't log fields that could be sensitive
+            aei.setParameters(ec.context.getRootMap().findAll{!['_requestBodyText','sri','ec'].contains(it.key) })
+            // As of 2025 June 11, this was false and said: for now don't track/count artifact hits for REST path
             aei.setTrackArtifactHit(true)
             // NOTE: consider setting parameters on aei, but don't like setting entire context, currently used for entity/service calls
             ec.artifactExecutionFacade.pushInternal(aei, !moreInPath ?
