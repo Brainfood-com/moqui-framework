@@ -270,7 +270,7 @@ public class ContextJavaUtil {
                     Object value = pme.getValue();
                     if (value == null || ObjectUtilities.isEmpty(value) || value instanceof Map || value instanceof Collection) continue;
                     String key = pme.getKey();
-                    if (key != null && key.contains("password")) continue;
+                    if (key != null && key.toLowerCase().contains("password")) continue;
                     if (ps.length() > 0) ps.append(", ");
                     String valString = value.toString();
                     if (valString.length() > 80) valString = valString.substring(0, 80);
