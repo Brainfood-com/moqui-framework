@@ -646,7 +646,28 @@ class RestApi {
             String curPath = getFullPathName([])
             ArtifactExecutionInfoImpl aei = new ArtifactExecutionInfoImpl(curPath, ArtifactExecutionInfo.AT_REST_PATH, getActionFromMethod(ec), ec.web.getRequest().getMethod().toLowerCase())
             // TODO: Don't log fields that could be sensitive
-            aei.setParameters(ec.context.getRootMap().findAll{!['_requestBodyText','sri','ec'].contains(it.key) })
+            List<String> allowedParamList = new ArrayList<String>()
+            allowedParamList.addAll(pathParameters)
+            String method = getCurrentMethod(ec)
+            MethodHandler mh = (MethodHandler) methodMap.get(method)
+            if (mh) {
+                if (method == "service") {
+                    MethodService methodService = (MethodService) mh
+                    ServiceFacadeImpl serviceFacade = (ServiceFacadeImpl) ec.getService()
+                    ServiceDefinition svcDef = (ServiceDefinition) serviceFacade.getServiceDefinition(methodService.serviceName)
+                    if (svcDef != null) {
+                        allowedParamList.addAll(svcDef.getInParameterRequiredNames())
+                    }
+                // TODO: If this is needed add it back in and test it
+                /* } else if (method == "entity") {
+                    EntityDefinition entDef = (EntityDefinition) ec.entity.getEntityDefinition(mh.entityNameField)
+                    if (entDef != null) {
+                        allowedParamList.addAll(entDef.getPkFieldNames())
+                    }*/
+                }
+            }
+            Map<String, Object> paramMap = ec.context.subMap(allowedParamList)
+            aei.setParameters(paramMap)
             // As of 2025 June 11, this was false and said: for now don't track/count artifact hits for REST path
             aei.setTrackArtifactHit(true)
             // NOTE: consider setting parameters on aei, but don't like setting entire context, currently used for entity/service calls

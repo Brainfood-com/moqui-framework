@@ -365,6 +365,11 @@ public class ServiceDefinition {
     public ArrayList<String> getInParameterNames() {
         return inParameterNameList;
     }
+    public ArrayList<String> getInParameterRequiredNames() {
+        ArrayList<String> requiredNames = new ArrayList<>();
+        for (ParameterInfo pi : inParameterInfoArray) if (pi.required && !pi.disabled) requiredNames.add(pi.name);
+        return requiredNames;
+    }
 
     public MNode getOutParameter(String name) {
         ParameterInfo pi = outParameterInfoMap.get(name);
