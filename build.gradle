@@ -24,18 +24,6 @@ buildscript {
 // Run headless so GradleWorkerMain does not steal focus (mostly a macOS annoyance)
 allprojects { tasks.withType(JavaForkOptions) { jvmArgs '-Djava.awt.headless=true' } }
 
-// Force consistent Jackson version across all projects (root and subprojects) to resolve conflicts
-allprojects {
-    configurations.all {
-        resolutionStrategy {
-            force 'com.fasterxml.jackson.core:jackson-core:2.15.2'
-            force 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
-            force 'com.fasterxml.jackson.core:jackson-annotations:2.15.2'
-            // Add other Jackson modules here if needed (e.g., jackson-datatype-jsr310)
-        }
-    }
-}
-
 import org.ajoberstar.grgit.*
 
 defaultTasks 'build'
