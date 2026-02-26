@@ -14,7 +14,7 @@
 package org.moqui.util;
 
 import groovy.json.JsonBuilder;
-import groovy.json.JsonSlurper;
+import groovy.json.JsonSlurperClassic;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.HttpClientTransport;
 import org.eclipse.jetty.client.HttpResponseException;
@@ -311,7 +311,7 @@ public class RestClient {
         try {
             Request request = makeRequest(tempFactory != null ? tempFactory : (overrideRequestFactory != null ? overrideRequestFactory : getDefaultRequestFactory()));
             if (timeoutSeconds < 2) timeoutSeconds = 2;
-            request.idleTimeout(timeoutSeconds > 30 ? 30 : timeoutSeconds-1, TimeUnit.SECONDS);
+            request.idleTimeout(timeoutSeconds - 1, TimeUnit.SECONDS);
             // use a FutureResponseListener so we can set the timeout and max response size (old: response = request.send(); )
             FutureResponseListener listener = new FutureResponseListener(request, maxResponseSize);
             try {
@@ -442,7 +442,7 @@ public class RestClient {
         /** Parse the response as JSON and return an Object */
         public Object jsonObject() {
             try {
-                return new JsonSlurper().parseText(text());
+                return new JsonSlurperClassic().parseText(text());
             } catch (Throwable t) {
                 throw new BaseException("Error parsing JSON response from request to " + rci.uriString, t);
             }
